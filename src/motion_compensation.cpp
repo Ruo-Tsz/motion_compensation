@@ -85,6 +85,10 @@ void MotionCompensation::Callback(const sensor_msgs::PointCloud2ConstPtr &msg)
         inCloud,
         mStartAzi,
         mClockwise);
+
+    int col_num = static_cast<int> (360.0/mAngResol);
+    auto gridMap = buildScanGrid(inCloud, col_num);
+
 void MotionCompensation::getScanRotation(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
     float& start_azi,
@@ -147,5 +151,50 @@ void MotionCompensation::getScanRotation(
         clockwise = false;
 
     std::cout << "start:" << start_azi << "; first: " << first_azimuth << "; second: " << second_azimuth << "; clockwise: " << clockwise << std::endl;
+}
+
+GridSlice MotionCompensation::buildScanGrid(
+    const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
+    const int& col_num)
+{
+    /*
+        Build 1-d grid map in angular direction.
+        Base on coordinate of poincloud, NOT from SCANNING ORDER.
+        Map store pt index in original inCloud.
+        @Param
+            INPUT:
+                inCloud: pointcloud
+                col_num: total num of grid
+            OUTPUT:
+                1-d map of grid slices
+            
+    */
+    GridSlice polarGrid(col_num);
+    
+    int col_idx;
+    float range, azimuth;
+    int pt_idx = 0;
+    for(const auto& pt: inCloud->points)
+    {
+        azimuth = std::atan2(pt.y, pt.x)*180/M_PI;
+        if(azimuth < 0) azimuth+=360;
+
+        col_idx = (floor)(azimuth/mAngResol);
+
+        if(col_idx > col_num-1) 
+        {
+            // if(row_idx > row_num-1)
+            //     std::cout << "Out of range: " << range << std::endl;
+            // else
+            //     std::cout << "\033[1;33mError azi\033[0m, col_idx: " << col_idx << ", azimuth: " << azimuth << std::endl;
+            pt_idx++;
+            continue;
+        }
+
+        polarGrid[col_idx].points().push_back(pt_idx);
+        pt_idx++;
+    }
+
+    return polarGrid;
 }
 }

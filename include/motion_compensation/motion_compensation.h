@@ -30,6 +30,9 @@ class MotionCompensation
             const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
             float& start_azi,
             bool& clockwise);
+        GridSlice buildScanGrid(
+            const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
+            const int& col_num);
     public:
         MotionCompensation();
         void Run();
