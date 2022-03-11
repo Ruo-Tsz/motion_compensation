@@ -89,6 +89,20 @@ void MotionCompensation::Callback(const sensor_msgs::PointCloud2ConstPtr &msg)
     int col_num = static_cast<int> (360.0/mAngResol);
     auto gridMap = buildScanGrid(inCloud, col_num);
 
+    // last pose relative to current origin
+    tf::Transform current_T_last;
+    current_T_last = mCurrentTransform.inverse() * mLastTransform;
+    auto _start = std::chrono::system_clock::now();
+    outCloud = motionCompensate(inCloud, gridMap, current_T_last);
+    auto _end = std::chrono::system_clock::now();
+    double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(_end-_start).count();
+    ROS_INFO("motionCompensate : %f ms", elapsed);
+
+    sensor_msgs::PointCloud2 outCloud_msg;
+    pcl::toROSMsg(*outCloud, outCloud_msg);
+    outCloud_msg.header = msg->header;
+    mPubScan.publish(outCloud_msg);
+    std::cout << "Pub cloud\n\n";
 void MotionCompensation::getScanRotation(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
     float& start_azi,
@@ -196,5 +210,190 @@ GridSlice MotionCompensation::buildScanGrid(
     }
 
     return polarGrid;
+}
+
+pcl::PointCloud<pcl::PointXYZI>::Ptr MotionCompensation::motionCompensate(
+    const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
+    const GridSlice& gridMap,
+    const tf::Transform& current_T_last)
+{
+    /*
+        Ego-motion compensation by transformation of 2 scans.
+        Compensate each grids' point in batch by revolution ratio of entire scan. 
+        @Param:
+            INPUT:
+                inCloud
+                gridMap: built gridMap
+                current_T_last: transformation of last scan ego-frame respect to current scan ego-frame
+            OUTPUT:
+                compensated pointcloud
+    */
+    pcl::PointCloud<pcl::PointXYZI>::Ptr outCloud(new pcl::PointCloud<pcl::PointXYZI>);
+    outCloud->header = inCloud->header;
+
+    std_msgs::Header gridStamp;
+    gridStamp.frame_id = inCloud->header.frame_id;
+    int basetime = mLastHeader.stamp.toNSec();
+    int dt = mCurrentHeader.stamp.toNSec() - basetime;
+    std::cout << "dt: " << dt << std::endl;
+    int timestep = 0;
+    float rev = 0;
+
+    tf::StampedTransform gridTransform;
+
+    int start_index = (floor)(mStartAzi/mAngResol);
+    std::cout << "start_index: " << start_index << "; mStartAzi: " << mStartAzi << std::endl;
+    if(mClockwise)
+    {
+        for(GridSlice::const_iterator it = gridMap.begin()+start_index; it != gridMap.begin()-1; it--)
+        {
+            int n_traverse_grid = start_index - (it - gridMap.begin());
+            timestep = (n_traverse_grid + 0.5)* mAngResol / 360 * dt;
+            rev = (n_traverse_grid + 0.5)* mAngResol / 360;
+            gridStamp.stamp.sec = int((basetime + timestep)/1e9);
+            gridStamp.stamp.nsec = int(basetime + timestep) % int(1e9);
+
+            // std::cout << "n_traverse_grid: " << n_traverse_grid << std::endl;
+            // std::cout << "timestep: " << timestep << std::endl;
+            // std::cout << "rev: " << rev << std::endl;
+
+            // k-1's(grid) pose relative to k origin
+            tf::Transform current_T_grid;
+            
+            // interpolate transform by revolusion
+            current_T_grid.setOrigin(tf::Vector3(
+                current_T_last.getOrigin().x()*(1-rev),
+                current_T_last.getOrigin().y()*(1-rev),
+                current_T_last.getOrigin().z()*(1-rev)));
+            current_T_grid.setRotation(tf::Quaternion(
+                current_T_last.getRotation().x()*(1-rev),
+                current_T_last.getRotation().y()*(1-rev),
+                current_T_last.getRotation().z()*(1-rev),
+                current_T_last.getRotation().w()*(1-rev)));
+            
+            for(const auto& pt_idx: it->points())
+            {
+                tf::Point pt_ori(inCloud->points[pt_idx].x, inCloud->points[pt_idx].y, inCloud->points[pt_idx].z);
+                tf::Point pt_comp = current_T_grid * pt_ori;
+                pcl::PointXYZI pt_final;
+                pt_final.x = pt_comp.x();
+                pt_final.y = pt_comp.y();
+                pt_final.z = pt_comp.z();
+                pt_final.intensity = inCloud->points[pt_idx].intensity;
+                outCloud->points.push_back(pt_final);
+            }
+        }
+        // for(GridSlice::const_reverse_iterator it = gridMap.rbegin(); it != gridMap.begin()+start_index; it++)
+        for(GridSlice::const_iterator it = gridMap.end()-1; it != gridMap.begin()+start_index; it--)
+        {
+            int n_traverse_grid = (start_index+1) + (gridMap.end()-1 - it);
+            timestep = (n_traverse_grid + 0.5)* mAngResol / 360 * dt;
+            rev = (n_traverse_grid + 0.5)* mAngResol / 360;
+            gridStamp.stamp.sec = int((basetime + timestep)/1e9);
+            gridStamp.stamp.nsec = int(basetime + timestep) % int(1e9);
+
+            // std::cout << "n_traverse_grid: " << n_traverse_grid << std::endl;
+            // std::cout << "timestep: " << timestep << std::endl;
+            // std::cout << "rev: " << rev << std::endl;
+
+            // k-1's(grid) pose relative to k origin
+            tf::Transform current_T_grid;
+            
+            // interpolate transform by revolusion
+            current_T_grid.setOrigin(tf::Vector3(
+                current_T_last.getOrigin().x()*(1-rev),
+                current_T_last.getOrigin().y()*(1-rev),
+                current_T_last.getOrigin().z()*(1-rev)));
+            current_T_grid.setRotation(tf::Quaternion(
+                current_T_last.getRotation().x()*(1-rev),
+                current_T_last.getRotation().y()*(1-rev),
+                current_T_last.getRotation().z()*(1-rev),
+                current_T_last.getRotation().w()*(1-rev)));
+            
+            for(const auto& pt_idx: it->points())
+            {
+                tf::Point pt_ori(inCloud->points[pt_idx].x, inCloud->points[pt_idx].y, inCloud->points[pt_idx].z);
+                tf::Point pt_comp = current_T_grid * pt_ori;
+                pcl::PointXYZI pt_final;
+                pt_final.x = pt_comp.x();
+                pt_final.y = pt_comp.y();
+                pt_final.z = pt_comp.z();
+                pt_final.intensity = inCloud->points[pt_idx].intensity;
+                outCloud->points.push_back(pt_final);
+            }
+        }
+    }
+    else
+    {
+        for(GridSlice::const_iterator it = gridMap.begin()+start_index; it != gridMap.end(); it++)
+        {
+            int n_traverse_grid = it - gridMap.begin() - start_index;
+            timestep = (n_traverse_grid + 0.5)* mAngResol / 360 * dt;
+            rev = (n_traverse_grid + 0.5)* mAngResol / 360;
+            gridStamp.stamp.sec = int((basetime + timestep)/1e9);
+            gridStamp.stamp.nsec = int(basetime + timestep) % int(1e9);
+
+            // k-1's(grid) pose relative to k origin
+            tf::Transform current_T_grid;
+            
+            // interpolate transform by revolusion
+            current_T_grid.setOrigin(tf::Vector3(
+                current_T_last.getOrigin().x()*(1-rev),
+                current_T_last.getOrigin().y()*(1-rev),
+                current_T_last.getOrigin().z()*(1-rev)));
+            current_T_grid.setRotation(tf::Quaternion(
+                current_T_last.getRotation().x()*(1-rev),
+                current_T_last.getRotation().y()*(1-rev),
+                current_T_last.getRotation().z()*(1-rev),
+                current_T_last.getRotation().w()*(1-rev)));
+            
+            for(const auto& pt_idx: it->points())
+            {
+                tf::Point pt_ori(inCloud->points[pt_idx].x, inCloud->points[pt_idx].y, inCloud->points[pt_idx].z);
+                tf::Point pt_comp = current_T_grid * pt_ori;
+                pcl::PointXYZI pt_final;
+                pt_final.x = pt_comp.x();
+                pt_final.y = pt_comp.y();
+                pt_final.z = pt_comp.z();
+                pt_final.intensity = inCloud->points[pt_idx].intensity;
+                outCloud->points.push_back(pt_final);
+            }
+        }
+        for(GridSlice::const_iterator it = gridMap.begin(); it != gridMap.begin()+start_index; it++)
+        {
+            int n_traverse_grid = (gridMap.size() - start_index) + (it - gridMap.begin());
+            timestep = (n_traverse_grid + 0.5)* mAngResol / 360 * dt;
+            rev = (n_traverse_grid + 0.5)* mAngResol / 360;
+            gridStamp.stamp.sec = int((basetime + timestep)/1e9);
+            gridStamp.stamp.nsec = int(basetime + timestep) % int(1e9);
+
+            // k-1's(grid) pose relative to k origin
+            tf::Transform current_T_grid;
+            
+            // interpolate transform by revolusion
+            current_T_grid.setOrigin(tf::Vector3(
+                current_T_last.getOrigin().x()*(1-rev),
+                current_T_last.getOrigin().y()*(1-rev),
+                current_T_last.getOrigin().z()*(1-rev)));
+            current_T_grid.setRotation(tf::Quaternion(
+                current_T_last.getRotation().x()*(1-rev),
+                current_T_last.getRotation().y()*(1-rev),
+                current_T_last.getRotation().z()*(1-rev),
+                current_T_last.getRotation().w()*(1-rev)));
+            
+            for(const auto& pt_idx: it->points())
+            {
+                tf::Point pt_ori(inCloud->points[pt_idx].x, inCloud->points[pt_idx].y, inCloud->points[pt_idx].z);
+                tf::Point pt_comp = current_T_grid * pt_ori;
+                pcl::PointXYZI pt_final;
+                pt_final.x = pt_comp.x();
+                pt_final.y = pt_comp.y();
+                pt_final.z = pt_comp.z();
+                pt_final.intensity = inCloud->points[pt_idx].intensity;
+                outCloud->points.push_back(pt_final);
+            }
+        }
+    }
+    return outCloud;
 }
 }
