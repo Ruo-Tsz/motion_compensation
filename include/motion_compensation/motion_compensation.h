@@ -37,6 +37,11 @@ class MotionCompensation
             const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
             const GridSlice& gridMap,
             const tf::Transform& current_T_last);
+        void pubMap(
+            const GridSlice& inMapIdx,
+            const ros::Publisher& inPublisher,
+            const std::string& inFrame_id);
+
     public:
         MotionCompensation();
         void Run();

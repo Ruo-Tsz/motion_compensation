@@ -103,6 +103,10 @@ void MotionCompensation::Callback(const sensor_msgs::PointCloud2ConstPtr &msg)
     outCloud_msg.header = msg->header;
     mPubScan.publish(outCloud_msg);
     std::cout << "Pub cloud\n\n";
+
+    pubMap(gridMap, mPubGridSlice, mCurrentHeader.frame_id);
+}
+
 void MotionCompensation::getScanRotation(
     const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
     float& start_azi,
@@ -396,4 +400,64 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr MotionCompensation::motionCompensate(
     }
     return outCloud;
 }
+
+void MotionCompensation::pubMap(
+    const GridSlice& inMapIdx,
+    const ros::Publisher& inPublisher,
+    const std::string& inFrame_id)
+{
+    visualization_msgs::MarkerArray slice_grids;
+
+    // pub grid line, iterate col(angular slice) first
+    for(int j = 0; j < inMapIdx.size(); j++)
+    {
+        visualization_msgs::Marker straight_line_marker;
+        straight_line_marker.type = visualization_msgs::Marker::LINE_STRIP;
+        straight_line_marker.header.stamp = ros::Time::now();
+        straight_line_marker.header.frame_id = inFrame_id;
+        straight_line_marker.ns = "straight_lines";
+        straight_line_marker.id = j;
+        straight_line_marker.action = visualization_msgs::Marker::ADD;
+        straight_line_marker.scale.x = 0.05;
+        straight_line_marker.color.r = 242.0/255.0;
+        straight_line_marker.color.g = 92.0/255.0;
+        straight_line_marker.color.b = 192.0/255.0;
+        straight_line_marker.color.a = 0.7;
+
+        for(int i = 0; i < 70; i+=10)
+        {
+            float azi = j*mAngResol;
+            geometry_msgs::Point pt;
+            pt.x = i * std::cos(azi*M_PI/180);
+            pt.y = i * std::sin(azi*M_PI/180);
+            pt.z = -1.9;
+            straight_line_marker.points.push_back(pt);
+        }
+        slice_grids.markers.push_back(straight_line_marker);
+    }
+
+    visualization_msgs::Marker scan_start_line_marker;
+    scan_start_line_marker.type = visualization_msgs::Marker::LINE_STRIP;
+    scan_start_line_marker.header.stamp = ros::Time::now();
+    scan_start_line_marker.header.frame_id = inFrame_id;
+    scan_start_line_marker.ns = "scan_start_lines";
+    scan_start_line_marker.id = 0;
+    scan_start_line_marker.action = visualization_msgs::Marker::ADD;
+    scan_start_line_marker.scale.x = 0.1;
+    scan_start_line_marker.color.r = 0;
+    scan_start_line_marker.color.g = 1;
+    scan_start_line_marker.color.b = 0;
+    scan_start_line_marker.color.a = 0.7;
+    geometry_msgs::Point pt;
+    pt.x = 0;
+    pt.y = 0;
+    pt.z = -1.9;
+    scan_start_line_marker.points.push_back(pt);
+    pt.x = 60 * std::cos(mStartAzi*M_PI/180);
+    pt.y = 60 * std::sin(mStartAzi*M_PI/180);
+    pt.z = -1.9;
+    scan_start_line_marker.points.push_back(pt);
+    slice_grids.markers.push_back(scan_start_line_marker);
+    
+    inPublisher.publish(slice_grids);
 }
