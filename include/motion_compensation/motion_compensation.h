@@ -26,6 +26,10 @@ class MotionCompensation
         bool mClockwise;
 
         void Callback(const sensor_msgs::PointCloud2ConstPtr &msg);
+        void getScanRotation(
+            const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
+            float& start_azi,
+            bool& clockwise);
     public:
         MotionCompensation();
         void Run();

@@ -81,4 +81,71 @@ void MotionCompensation::Callback(const sensor_msgs::PointCloud2ConstPtr &msg)
         return;
     }
 
+    getScanRotation(
+        inCloud,
+        mStartAzi,
+        mClockwise);
+void MotionCompensation::getScanRotation(
+    const pcl::PointCloud<pcl::PointXYZI>::Ptr& inCloud,
+    float& start_azi,
+    bool& clockwise)
+{
+    /*
+        Get starting scan azimuth in pointcloud coordinate and rotate orientation.
+        This function is for non-stamped pointcloud.
+        @Param
+            INPUT:
+                inCloud: original input cloud
+            OUTPUT:
+                start_azi: record first pt azimuth (degree) in poincloud sequence
+                clockwise: scanning orientation
+    */
+    pcl::PointCloud<pcl::PointXYZI>::Ptr outCloud(new pcl::PointCloud<pcl::PointXYZI>);
+    int counter = 0;
+    for(auto pt: inCloud->points)
+    {
+        pcl::PointXYZI pt_out;
+        pt_out = pt;
+        pt_out.intensity = counter;
+        outCloud->points.push_back(pt_out);
+        counter++;
+    }
+    sensor_msgs::PointCloud2 outCloud_msg;
+    pcl::toROSMsg(*outCloud, outCloud_msg);
+    outCloud_msg.header = mCurrentHeader;
+    mPubScanOrder.publish(outCloud_msg);
+
+    // check scanning direction by points' order in cloud
+    float first_azimuth=0, second_azimuth=0, first_counter=0, second_counter=0;
+    float window_size = 10;
+    for(int i = 0; i < inCloud->points.size(); i++)
+    {
+        float azi = std::atan2(inCloud->points[i].y, inCloud->points[i].x) * 180 / M_PI;
+        azi = (azi < 0) ? azi + 360 : azi;
+        if(i == 0)
+            start_azi = azi;
+
+        if(i < inCloud->points.size()/window_size)
+        {
+            first_azimuth += azi;
+            first_counter++;
+        }
+        else if (i < inCloud->points.size()/(window_size/2))
+        {
+            second_azimuth += azi; 
+            second_counter++;
+        }
+        else
+            break;
+    }
+    first_azimuth /= first_counter;
+    second_azimuth /= second_counter;
+
+    if(second_azimuth < first_azimuth)
+        clockwise = true;
+    else
+        clockwise = false;
+
+    std::cout << "start:" << start_azi << "; first: " << first_azimuth << "; second: " << second_azimuth << "; clockwise: " << clockwise << std::endl;
+}
 }
